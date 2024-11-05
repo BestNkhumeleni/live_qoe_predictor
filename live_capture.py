@@ -3,23 +3,23 @@ import socket
 import threading
 import time
 from collections import Counter
-
 import pickle
 import pandas as pd
+import csv
 
+# Function to load a trained model from a .pkl file
 def load_model(pkl_file):
-    """Load a trained model from a .pkl file."""
     with open(pkl_file, 'rb') as file:
         model = pickle.load(file)
     return model
 
-
+# Function to load the label encoder from a .pkl file
 def load_label_encoder(pkl_file):
-    """Load the label encoder from a .pkl file."""
     with open(pkl_file, 'rb') as file:
         label_encoder = pickle.load(file)
     return label_encoder
 
+# Function to predict from a CSV input
 def predict_from_csv(input_csv):
     # Load the pre-trained models
     resolution_model = load_model('/home/best/Desktop/live_qoe_predictor/resolution_model.pkl')  # Replace with actual file path
@@ -31,19 +31,19 @@ def predict_from_csv(input_csv):
     # Load and preprocess the new input data for prediction
     input_data = pd.read_csv(input_csv)
 
-    # Drop the video name (or any unnecessary) column for prediction
+    # Extract relevant features for prediction
     input_features = input_data[['bitrate', 'num_bytes', 'num_packets', 'interval', 'packet_size']].mean(axis=0)
 
-    # Scale the input data using a scaler (assumed to have been saved during training)
+    # Load scalers
     fps_scaler = load_model("/home/best/Desktop/live_qoe_predictor/fps_scaler")
     res_scaler = load_model("/home/best/Desktop/live_qoe_predictor/res_scaler")
-    # input_features_scaled = scaler.fit_transform(input_features)  # Adjust this if the scaler was saved separately
     
+    # Scale the input data
     unseen_features_scaled_fps = fps_scaler.transform([input_features])
     unseen_features_scaled_res = res_scaler.transform([input_features])
-    # # Predict resolution using the pre-trained model
+    
+    # Predict resolution using the pre-trained model
     resolution_prediction_encoded = resolution_model.predict(unseen_features_scaled_res)[0]
-    # # Inverse transform the encoded resolution prediction to get the original label
     resolution_prediction = resolution_label_encoder.inverse_transform([resolution_prediction_encoded])[0]
     
     print(f"\nPredicted Resolution: {resolution_prediction}")
@@ -51,19 +51,20 @@ def predict_from_csv(input_csv):
     # Predict fps using the pre-trained model
     fps_prediction = fps_model.predict(unseen_features_scaled_fps)[0]
     print(f"Predicted FPS: {fps_prediction}")
-    # resolution_prediction = ""
+
     # Return the best predictions
     return resolution_prediction, fps_prediction
 
-predict_from_csv("/home/best/Desktop/EEE4022S/Data/training_data/test_2_720p_60_4.csv")
+# Create the CSV file with headers if it does not exist
+csv_file = "averages_output.csv"
+with open(csv_file, mode='w', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerow(['bitrate', 'num_bytes', 'num_packets', 'interval', 'packet_size'])
 
-
-# Dynamically get the local device IP address
+# Function to get the local IP address of the device
 def get_local_ip():
-    # Create a dummy socket to get the device's IP address
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # Connecting to an arbitrary IP doesn't send packets but assigns an IP to the socket
         s.connect(("8.8.8.8", 80))
         ip_address = s.getsockname()[0]
     finally:
@@ -85,7 +86,7 @@ packet_times = []
 start_time = time.time()
 
 # Interval duration in seconds
-interval = 5  # You can adjust this value as needed
+interval = 30  # You can adjust this value as needed
 
 # Callback function to process each captured packet
 def packet_callback(packet):
@@ -119,8 +120,8 @@ def packet_callback(packet):
     except IndexError:
         pass  # Ignore packets without a TCP layer
 
-# Function to calculate and print averages for the specified interval
-def print_averages():
+# Function to calculate, print, and save averages for the specified interval
+def print_and_save_averages():
     global packet_sizes, packet_intervals, packet_counts, total_size
     while True:
         time.sleep(interval)  # Wait for the interval duration
@@ -132,7 +133,7 @@ def print_averages():
             avg_packet_size = 0
 
         if packet_intervals:
-            avg_packet_interval = (sum(packet_intervals) / len(packet_intervals))*1000
+            avg_packet_interval = (sum(packet_intervals) / len(packet_intervals)) * 1000
         else:
             avg_packet_interval = 0
 
@@ -143,10 +144,19 @@ def print_averages():
 
         # Print averages
         print(f"\nAverages for the past {interval} seconds:")
-        print(f"Average Packet Size: {avg_packet_size:.3f} bytes")
-        print(f"Average Interval Between Packets: {avg_packet_interval:.5f} s")
-        print(f"Average Number of Packets per Second: {avg_packet_count:.2f}")
         print(f"Bitrate: {bitrate_bps:.2f} bps")
+        print(f"Total Bytes: {total_size} bytes")
+        print(f"Number of Packets: {avg_packet_count}")
+        print(f"Average Interval Between Packets: {avg_packet_interval:.5f} ms")
+        print(f"Average Packet Size: {avg_packet_size:.2f} bytes")
+
+        # Overwrite the averages in the CSV file, keeping the headers
+        with open(csv_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['bitrate', 'num_bytes', 'num_packets', 'interval', 'packet_size'])
+            writer.writerow([bitrate_bps, total_size, avg_packet_count, avg_packet_interval, avg_packet_size])
+        
+        # predict_from_csv("averages_output.csv")
 
         # Reset tracking variables for the next interval
         packet_sizes.clear()
@@ -175,7 +185,7 @@ def start_sniffing():
 # Start sniffing, domain identification, and average calculation in separate threads
 sniff_thread = threading.Thread(target=start_sniffing, daemon=True)
 identify_ip_thread = threading.Thread(target=identify_most_frequent_ip, daemon=True)
-print_averages_thread = threading.Thread(target=print_averages, daemon=True)
+print_averages_thread = threading.Thread(target=print_and_save_averages, daemon=True)
 sniff_thread.start()
 identify_ip_thread.start()
 print_averages_thread.start()

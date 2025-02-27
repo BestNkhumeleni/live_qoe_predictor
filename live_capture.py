@@ -166,10 +166,24 @@ def print_and_save_averages():
 
 # Function to determine the most frequent IP address every interval and perform a reverse DNS lookup
 def identify_most_frequent_ip():
+    global identified_ip, consecutive_matches
+    identified_ip = None
+    consecutive_matches = 0
+
     while True:
         time.sleep(interval)  # Wait for the interval duration
         if ip_addresses:
             most_common_ip, _ = Counter(ip_addresses).most_common(1)[0]
+            if identified_ip == most_common_ip:
+                consecutive_matches += 1
+            else:
+                identified_ip = most_common_ip
+                consecutive_matches = 1
+
+            if consecutive_matches == 2:
+                print(f"Identified consistent IP for video stream: {identified_ip}")
+                break
+
             try:
                 domain_name = socket.gethostbyaddr(most_common_ip)[0]
                 print(f"Most frequent IP: {most_common_ip} belongs to domain: {domain_name}")
@@ -177,10 +191,18 @@ def identify_most_frequent_ip():
                 print(f"Could not resolve domain name for IP: {most_common_ip}")
             ip_addresses.clear()  # Clear the list for the next analysis window
 
+    # Start sniffing only packets from/to the identified IP
+    start_sniffing_for_video_stream(identified_ip)
+
 # Start packet sniffing in a background thread
 def start_sniffing():
     print("Starting packet capture.")
     sniff(prn=packet_callback, store=0)
+
+# Sniff packets only for the identified video stream IP
+def start_sniffing_for_video_stream(video_ip):
+    print(f"Starting packet capture for video stream IP: {video_ip}")
+    sniff(filter=f"host {video_ip} and port 443", prn=packet_callback, store=0)
 
 # Start sniffing, domain identification, and average calculation in separate threads
 sniff_thread = threading.Thread(target=start_sniffing, daemon=True)
